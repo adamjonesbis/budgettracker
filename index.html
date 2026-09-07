@@ -6,6 +6,7 @@
 <title>Field Ledger — Travel Budget</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   :root{
     --bg:#14181a;
@@ -73,18 +74,20 @@
     border:1px solid var(--border);
     border-radius:4px;
     padding:18px;
+    display:flex;
+    align-items:center;
+    gap:14px;
   }
-  .card .cat{font-family:'Fraunces', serif;font-size:17px;margin-bottom:14px;}
-  .card .nums{display:flex;align-items:baseline;gap:6px;margin-bottom:10px;}
-  .card .spent{font-size:22px;font-weight:600;}
+  .card .card-info{flex:1;min-width:0;}
+  .card .cat{font-family:'Fraunces', serif;font-size:17px;margin-bottom:10px;}
+  .card .nums{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
+  .card .spent{font-size:20px;font-weight:600;}
   .card .of-budget{color:var(--text-dim);font-size:12px;}
-  .bar-track{
-    height:6px;background:var(--surface-alt);border-radius:3px;overflow:hidden;
-  }
-  .bar-fill{height:100%;border-radius:3px;background:var(--good);transition:width .25s;}
-  .bar-fill.over{background:var(--over);}
-  .card .status{font-size:11px;color:var(--text-dim);margin-top:8px;}
+  .card .status{font-size:11px;color:var(--text-dim);}
   .card .status.over-text{color:var(--over);}
+  .card-chart-wrap{
+    width:64px;height:64px;flex-shrink:0;position:relative;
+  }
 
   .total-strip{
     display:flex;justify-content:space-between;align-items:center;
@@ -98,6 +101,21 @@
   .total-strip .value{font-family:'Fraunces', serif;font-size:24px;}
   .total-strip .value.over{color:var(--over);}
   .total-strip .value.good{color:var(--good);}
+
+  .overview-panel{display:flex;align-items:center;gap:28px;flex-wrap:wrap;}
+  .overview-chart-wrap{width:140px;height:140px;flex-shrink:0;position:relative;}
+  .overview-center{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;pointer-events:none;
+  }
+  .overview-center .pct{font-family:'Fraunces', serif;font-size:22px;}
+  .overview-center .pct-label{font-size:9px;color:var(--text-dim);letter-spacing:0.04em;}
+  .overview-legend{display:flex;flex-direction:column;gap:10px;}
+  .legend-row{display:flex;align-items:center;gap:8px;font-size:13px;}
+  .legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+  .legend-dot.good{background:var(--good);}
+  .legend-dot.over{background:var(--over);}
+  .legend-row .amt{color:var(--text-dim);font-size:12px;}
 
   section.panel{
     background:var(--surface);
@@ -161,7 +179,15 @@
   .empty-row td{color:var(--text-dim);text-align:center;padding:24px 0;}
 
   .budget-edit{display:flex;gap:10px;flex-wrap:wrap;}
-  .budget-edit .field{flex:1;min-width:140px;}
+  .budget-edit .field{flex:1;min-width:150px;}
+  .budget-edit .field-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;}
+  .budget-edit .field-head label{margin-bottom:0;}
+  .budget-edit .reset-btn{
+    background:none;border:none;color:var(--text-dim);font-size:10px;
+    text-decoration:underline;cursor:pointer;padding:0;margin:0;
+  }
+  .budget-edit .reset-btn:hover{color:var(--accent);}
+  .budget-edit input.overridden{border-color:var(--accent);}
 
   .status-msg{font-size:12px;color:var(--text-dim);margin-top:10px;min-height:16px;}
   .status-msg.error{color:var(--over);}
@@ -199,16 +225,20 @@
 
     <div class="cards" id="cat-cards"></div>
 
-    <div class="total-strip">
-      <div>
-        <div class="label">Week total</div>
-        <div class="value" id="week-total-value">—</div>
+    <section class="panel overview-panel">
+      <div class="overview-chart-wrap">
+        <canvas id="overview-chart"></canvas>
+        <div class="overview-center">
+          <div class="pct" id="overview-pct">—</div>
+          <div class="pct-label">OF BUDGET</div>
+        </div>
       </div>
-      <div style="text-align:right;">
-        <div class="label">Budget</div>
-        <div class="value" id="week-budget-value">—</div>
+      <div class="overview-legend">
+        <div class="legend-row"><span class="legend-dot over"></span> Spent <span class="amt" id="overview-spent">—</span></div>
+        <div class="legend-row"><span class="legend-dot good"></span> Left <span class="amt" id="overview-left">—</span></div>
+        <div class="legend-row">Budget <span class="amt" id="overview-budget">—</span></div>
       </div>
-    </div>
+    </section>
 
     <section class="panel">
       <h2>Log an expense</h2>
@@ -248,7 +278,8 @@
     </section>
 
     <section class="panel">
-      <h2>Weekly budgets</h2>
+      <h2 id="budget-heading">Budgets — Week 1</h2>
+      <div class="status-msg" style="margin-top:-10px;margin-bottom:14px;">Editing here only changes this week. Use "Reset" to fall back to the default.</div>
       <div class="budget-edit" id="budget-edit"></div>
     </section>
 
@@ -270,7 +301,8 @@ const CONFIG = {
   currencySymbol: '€'
 };
 
-let STATE = { settings: null, budgets: [], expenses: [], selectedWeek: 1 };
+let STATE = { settings: null, budgets: [], overrides: [], expenses: [], selectedWeek: 1 };
+let CHARTS = { cards: {}, overview: null };
 
 function fmt(n){ return CONFIG.currencySymbol + Number(n).toFixed(2); }
 
@@ -279,11 +311,25 @@ async function loadData(){
   const data = await res.json();
   STATE.settings = data.settings;
   STATE.budgets = data.budgets;
+  STATE.overrides = data.overrides || [];
   STATE.expenses = data.expenses.sort((a,b) => new Date(b.date) - new Date(a.date));
   if (!STATE.expenses.some(e => e.week === STATE.selectedWeek)) {
     STATE.selectedWeek = currentWeek();
   }
   render();
+}
+
+// Returns the budget that actually applies to this category for this week:
+// a per-week override if one exists, otherwise the default.
+function effectiveBudget(category, week){
+  const override = STATE.overrides.find(o => o.category === category && o.week === week);
+  if (override) return override.weeklyBudget;
+  const def = STATE.budgets.find(b => b.category === category);
+  return def ? def.weeklyBudget : 0;
+}
+
+function hasOverride(category, week){
+  return STATE.overrides.some(o => o.category === category && o.week === week);
 }
 
 function currentWeek(){
@@ -326,54 +372,124 @@ function renderWeekTabs(){
 function renderCategoryCards(){
   const container = document.getElementById('cat-cards');
   container.innerHTML = '';
+
+  // Destroy old chart instances before rebuilding the DOM they live in.
+  Object.values(CHARTS.cards).forEach(c => c.destroy());
+  CHARTS.cards = {};
+
   const weekExpenses = STATE.expenses.filter(e => e.week === STATE.selectedWeek);
 
   let weekTotal = 0, weekBudgetTotal = 0;
 
   STATE.budgets.forEach(b => {
+    const budget = effectiveBudget(b.category, STATE.selectedWeek);
     const spent = weekExpenses.filter(e => e.category === b.category)
       .reduce((sum, e) => sum + e.amount, 0);
     weekTotal += spent;
-    weekBudgetTotal += b.weeklyBudget;
+    weekBudgetTotal += budget;
 
-    const pct = b.weeklyBudget > 0 ? Math.min(100, (spent / b.weeklyBudget) * 100) : 0;
-    const over = spent > b.weeklyBudget;
+    const over = spent > budget;
+    const canvasId = 'chart-' + b.category.replace(/\s+/g,'-');
 
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
-      <div class="cat">${b.category}</div>
-      <div class="nums">
-        <span class="spent">${fmt(spent)}</span>
-        <span class="of-budget">of ${fmt(b.weeklyBudget)}</span>
+      <div class="card-info">
+        <div class="cat">${b.category}</div>
+        <div class="nums">
+          <span class="spent">${fmt(spent)}</span>
+          <span class="of-budget">of ${fmt(budget)}</span>
+        </div>
+        <div class="status ${over ? 'over-text' : ''}">${over ? 'Over by ' + fmt(spent - budget) : fmt(budget - spent) + ' left'}</div>
       </div>
-      <div class="bar-track"><div class="bar-fill ${over ? 'over' : ''}" style="width:${pct}%"></div></div>
-      <div class="status ${over ? 'over-text' : ''}">${over ? 'Over by ' + fmt(spent - b.weeklyBudget) : fmt(b.weeklyBudget - spent) + ' left'}</div>
+      <div class="card-chart-wrap"><canvas id="${canvasId}"></canvas></div>
     `;
     container.appendChild(card);
+
+    const spentSlice = Math.min(spent, budget);
+    const leftSlice = Math.max(budget - spent, 0);
+    const overSlice = Math.max(spent - budget, 0);
+
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    CHARTS.cards[b.category] = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        datasets: [{
+          data: over ? [budget, overSlice] : [spentSlice, leftSlice],
+          backgroundColor: over ? ['#c4553d', '#8a3a29'] : ['#c4553d', '#6b9e78'],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        cutout: '65%',
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        animation: false
+      }
+    });
   });
 
-  const totalEl = document.getElementById('week-total-value');
-  totalEl.textContent = fmt(weekTotal);
-  totalEl.className = 'value ' + (weekTotal > weekBudgetTotal ? 'over' : 'good');
-  document.getElementById('week-budget-value').textContent = fmt(weekBudgetTotal);
+  const overPct = weekBudgetTotal > 0 ? Math.round((weekTotal / weekBudgetTotal) * 100) : 0;
+  document.getElementById('overview-pct').textContent = overPct + '%';
+  document.getElementById('overview-spent').textContent = fmt(weekTotal);
+  document.getElementById('overview-left').textContent = fmt(Math.max(weekBudgetTotal - weekTotal, 0));
+  document.getElementById('overview-budget').textContent = fmt(weekBudgetTotal);
+
+  const overviewSpentSlice = Math.min(weekTotal, weekBudgetTotal);
+  const overviewLeftSlice = Math.max(weekBudgetTotal - weekTotal, 0);
+  const overviewOver = weekTotal > weekBudgetTotal;
+
+  if (CHARTS.overview) CHARTS.overview.destroy();
+  const overviewCtx = document.getElementById('overview-chart').getContext('2d');
+  CHARTS.overview = new Chart(overviewCtx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: overviewOver ? [weekBudgetTotal, weekTotal - weekBudgetTotal] : [overviewSpentSlice, overviewLeftSlice],
+        backgroundColor: overviewOver ? ['#c4553d', '#8a3a29'] : ['#c4553d', '#6b9e78'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      cutout: '72%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      animation: false
+    }
+  });
 }
 
 function renderBudgetEdit(){
+  document.getElementById('budget-heading').textContent = `Budgets — Week ${STATE.selectedWeek}`;
+
   const container = document.getElementById('budget-edit');
   container.innerHTML = '';
   STATE.budgets.forEach(b => {
+    const overridden = hasOverride(b.category, STATE.selectedWeek);
+    const value = effectiveBudget(b.category, STATE.selectedWeek);
+
     const field = document.createElement('div');
     field.className = 'field';
     field.innerHTML = `
-      <label>${b.category} / week</label>
-      <input type="number" step="1" value="${b.weeklyBudget}" data-category="${b.category}">
+      <div class="field-head">
+        <label>${b.category}</label>
+        ${overridden ? '<button type="button" class="reset-btn">Reset</button>' : ''}
+      </div>
+      <input type="number" step="1" value="${value}" class="${overridden ? 'overridden' : ''}">
     `;
+
     const input = field.querySelector('input');
     input.addEventListener('change', async () => {
-      await postAction({ action: 'updateBudget', category: b.category, amount: input.value });
+      await postAction({ action: 'updateBudget', category: b.category, amount: input.value, week: STATE.selectedWeek });
       loadData();
     });
+
+    const resetBtn = field.querySelector('.reset-btn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        await postAction({ action: 'clearBudgetOverride', category: b.category, week: STATE.selectedWeek });
+        loadData();
+      });
+    }
+
     container.appendChild(field);
   });
 }
